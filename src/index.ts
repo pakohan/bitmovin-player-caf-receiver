@@ -1,5 +1,11 @@
 import { CAFDrmConfig, CAFMediaInfoCustomData, CAFSourceOptions } from 'bitmovin-player';
-import { CastReceiverContext, ContentProtection, NetworkRequestInfo, PlayerManager } from 'chromecast-caf-receiver/cast.framework';
+import {
+  CastReceiverContext,
+  ContentProtection,
+  NetworkRequestInfo,
+  PlayerManager,
+} from 'chromecast-caf-receiver/cast.framework';
+import type { RequestData } from 'chromecast-caf-receiver/cast.framework.messages';
 import { LoadRequestData } from 'chromecast-caf-receiver/cast.framework.messages';
 import type { Event } from 'chromecast-caf-receiver/cast.framework.system';
 
@@ -23,6 +29,7 @@ export default class CAFReceiver {
 
   private attachEvents() {
     this.player.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, this.onLoad);
+    this.player.setMessageInterceptor(cast.framework.messages.MessageType.MEDIA_STATUS, this.preprocessMediaStatusUpdate);
     this.context.addCustomMessageListener(CAST_MESSAGE_NAMESPACE, this.onCustomMessage);
   }
 
@@ -38,6 +45,21 @@ export default class CAFReceiver {
     }
 
     return loadRequestData;
+  };
+
+  /**
+   * Preprocesses the outgoing media status messages and add additional custom data.
+   */
+  private readonly preprocessMediaStatusUpdate = (message: RequestData): RequestData => {
+    const startAbsoluteTime = this.player.getStartAbsoluteTime();
+    const additionalCustomData = { startAbsoluteTime };
+
+    message.customData = {
+      ...message.customData || {},
+      ...additionalCustomData,
+    };
+
+    return message;
   };
 
   private setDRM({ protectionSystem, licenseUrl, headers, withCredentials }: CAFDrmConfig): void {
