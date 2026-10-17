@@ -3,6 +3,7 @@ import {
   CastReceiverContext,
   ContentProtection,
   NetworkRequestInfo,
+  PlaybackConfig,
   PlayerManager,
 } from 'chromecast-caf-receiver/cast.framework';
 import type { RequestData } from 'chromecast-caf-receiver/cast.framework.messages';
@@ -10,6 +11,17 @@ import { LoadRequestData } from 'chromecast-caf-receiver/cast.framework.messages
 import type { Event } from 'chromecast-caf-receiver/cast.framework.system';
 
 const CAST_MESSAGE_NAMESPACE = 'urn:x-cast:com.bitmovin.player.caf';
+
+type RequestHandler = NonNullable<PlaybackConfig['manifestRequestHandler']>;
+
+type SignedQuery = {
+  urlPrefix: string;
+  query: string;
+};
+
+type SignedQueriesCustomData = CAFMediaInfoCustomData & {
+  signedQueries?: SignedQuery[];
+};
 
 export default class CAFReceiver {
   private readonly player: PlayerManager;
@@ -34,10 +46,14 @@ export default class CAFReceiver {
   }
 
   private readonly onLoad = (loadRequestData: LoadRequestData): LoadRequestData => {
-    const customData = loadRequestData.media.customData as CAFMediaInfoCustomData;
+    const customData = loadRequestData.media.customData as SignedQueriesCustomData;
 
     if (customData?.options) {
       this.setWithCredentials(customData.options);
+    }
+
+    if (customData?.signedQueries?.length) {
+      this.setSignedQueries(customData.signedQueries);
     }
 
     if (customData?.drm) {
@@ -97,9 +113,35 @@ export default class CAFReceiver {
     playerManager.setPlaybackConfig(playbackConfig);
   }
 
+  private setSignedQueries(signedQueries: SignedQuery[]): void {
+    const playerManager = this.context.getPlayerManager();
+    const playbackConfig = Object.assign(new cast.framework.PlaybackConfig(), playerManager.getPlaybackConfig());
+
+    const withSignedQuery = (existingHandler?: RequestHandler): RequestHandler => (requestInfo) => {
+      const handled = existingHandler?.(requestInfo);
+      requestInfo.url = appendSignedQuery(requestInfo.url, signedQueries);
+      return handled;
+    };
+
+    playbackConfig.manifestRequestHandler = withSignedQuery(playbackConfig.manifestRequestHandler);
+    playbackConfig.segmentRequestHandler = withSignedQuery(playbackConfig.segmentRequestHandler);
+    playbackConfig.captionsRequestHandler = withSignedQuery(playbackConfig.captionsRequestHandler);
+
+    playerManager.setPlaybackConfig(playbackConfig);
+    console.log('Registered signed queries for', signedQueries.map(({ urlPrefix }) => urlPrefix));
+  }
+
   private readonly onCustomMessage = (message: Event) => {
     console.log('Received custom channel message', message);
   };
+}
+
+function appendSignedQuery(url: string, signedQueries: SignedQuery[]): string {
+  const match = signedQueries.find(({ urlPrefix }) => url.startsWith(urlPrefix));
+  if (!match) {
+    return url;
+  }
+  return `${url}${url.includes('?') ? '&' : '?'}${match.query}`;
 }
 
 function setWithCredentialsFlag(requestInfo: NetworkRequestInfo): void {
